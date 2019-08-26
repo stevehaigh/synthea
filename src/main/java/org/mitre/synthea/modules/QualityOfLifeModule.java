@@ -122,13 +122,16 @@ public class QualityOfLifeModule extends Module {
       // TODO - It seems as if this does not get reached as often as it should.
     }
     // get list of conditions
+    int medicationCount = 0;
     List<Entry> allConditions = new ArrayList<Entry>();
     for (Encounter encounter : person.record.encounters) {
       for (Entry condition : encounter.conditions) {
         allConditions.add(condition);
       }
+      medicationCount += encounter.medications.size();
     }
 
+    double percentageOfCoveredCare = 1.0; // TODO
     double disabilityWeight = 0.0;
     // calculate yld with yearly timestep
     for (int i = 0; i < age + 1; i++) {
@@ -139,7 +142,9 @@ public class QualityOfLifeModule extends Module {
       disabilityWeight = 0.0;
 
       for (Entry condition : conditionsInYear) {
-        disabilityWeight += (double) disabilityWeights.get(condition.codes.get(0).code).medium;
+        disabilityWeight += 
+          (double) disabilityWeights.get(condition.codes.get(0).code)
+            .getWeight(percentageOfCoveredCare);
       }
 
       disabilityWeight = Math.min(1.0, weight(disabilityWeight, i + 1));
@@ -215,7 +220,12 @@ public class QualityOfLifeModule extends Module {
       this.medium = parseDouble(values.getOrDefault("MED", "0.0"));
       this.high = parseDouble(values.getOrDefault("HIGH", "0.0"));
     }
-
+    public double getWeight(double percentageOfCoveredCare) {
+      // TODO use triangle distribution with low, medium, high
+      // where percentageOfCoveredCare = 1 means all care,
+      // and 0 means no care.
+      return medium;
+    }
     private double parseDouble(String value) {
       if (value == null || value.isEmpty()) {
         return 0.0;

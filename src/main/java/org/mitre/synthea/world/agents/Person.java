@@ -87,6 +87,7 @@ public class Person implements Serializable, QuadTreeData {
   private Map<String, Map<String, Boolean>> symptomStatuses;
   /** the active health record. */
   public HealthRecord record;
+  public HealthRecord uncoveredHealthRecord;
   public Map<String, HealthRecord> records;
   public boolean hasMultipleRecords;
   /** History of the currently active module. */
@@ -117,6 +118,7 @@ public class Person implements Serializable, QuadTreeData {
       records = new ConcurrentHashMap<String, HealthRecord>();
     }
     record = new HealthRecord(this);
+    uncoveredHealthRecord = new HealthRecord(this);
     // 128 because it's a nice power of 2, and nobody will reach that age
     payerHistory = new Payer[128];
     payerOwnerHistory = new String[128];
@@ -132,7 +134,7 @@ public class Person implements Serializable, QuadTreeData {
   }
 
   /**
-   * Retuns a random double in the given range.
+   * Returns a random double in the given range.
    */
   public double rand(double low, double high) {
     return (low + ((high - low) * random.nextDouble()));
@@ -386,7 +388,16 @@ public class Person implements Serializable, QuadTreeData {
     return record.encounterStart(time, type);
   }
 
+  /**
+   * Returns the current healthrecord based on the provider. If the person has
+   * No Insurance at the current time, uncoveredHealthRecord will be returned.
+   * TODO - Add if the person can/cannot afford the care, then uncoveredHealthRecord
+   * 
+   * @param provider the provider of the encounter
+   * @param entry the entry
+   */
   public synchronized HealthRecord getHealthRecord(Provider provider) {
+
     HealthRecord returnValue = this.record;
     if (hasMultipleRecords) {
       String key = provider.uuid;
@@ -599,13 +610,22 @@ public class Person implements Serializable, QuadTreeData {
   }
 
   /**
-   * Returns whether or not the person can afford to pay out of pocket for the given encounter.
-   * Defaults to return false for everyone. For now.
+   * Returns whether or not the person can afford to pay out of pocket for the given entry.
+   * Allows a person to pay exceeding their income once.
    * 
-   * @param entry the entry to pay for.
+   * @param time the time to pay for.
    */
-  public boolean canAffordCare(Entry entry) {
-    // TODO determine if they can afford the care
+  public boolean canAffordExpense(long time) {
+
+    double currentYearlyExpenses;
+    if (this.healthcareExpensesYearly.containsKey(this.ageInYears(time))) {
+      currentYearlyExpenses = this.healthcareExpensesYearly.get(this.ageInYears(time));
+    } else {
+      currentYearlyExpenses = 0.0;
+    }
+    if ( (int) this.attributes.get(Person.INCOME) - currentYearlyExpenses > 0) {
+      return true;
+    }
     return false;
   }
 
@@ -626,8 +646,10 @@ public class Person implements Serializable, QuadTreeData {
 
     if (currentMonth > lastMonthPaid || (currentMonth == 1 && lastMonthPaid == 12)) {
 
-      // TODO - Check that they can still afford the premium due to any newly incurred health costs.
+      // Check that the person still has income to spend
+      if (!this.canAffordExpense(time)) {
 
+      }
       // Pay the payer.
       Payer currentPayer = this.getPayerAtTime(time);
       this.addExpense(currentPayer.payMonthlyPremium(), time);
