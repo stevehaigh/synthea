@@ -71,23 +71,8 @@ public class Claim {
       this.payerCoversEntry(mainEntry);
     }  else {
       // Payer will not cover the care.
-      // Current HealthRecord is continued to be used.
       this.payerDoesNotCoverEntry(mainEntry);
       costToPatient = totalCost;
-      if (person.canAffordExpense(mainEntry.start)) {
-        // Person covers their own care.
-        // Current HealthRecord is continued to be used.
-      } else {
-        // The person does not recieve the care.
-        // Pull the encounter out of this healthrecord and insert it into the uncoveredHeathRecord
-        if (mainEntry instanceof Encounter) {
-          // The most recent (current) encounter is the last in the list of the encounters.
-          mainEntry.record.encounters.remove(mainEntry.record.encounters.size() - 1);
-          // Add this encounter to the uncovered healthrecord.
-          person.uncoveredHealthRecord.encounters.add((Encounter) mainEntry);
-        }
-        // TODO - figure out medication stuff
-      }
     }
 
     // Update Person's Expenses and Coverage.

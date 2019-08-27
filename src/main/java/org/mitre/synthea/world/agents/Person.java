@@ -24,7 +24,6 @@ import org.mitre.synthea.world.concepts.HealthRecord;
 import org.mitre.synthea.world.concepts.HealthRecord.Code;
 import org.mitre.synthea.world.concepts.HealthRecord.Encounter;
 import org.mitre.synthea.world.concepts.HealthRecord.EncounterType;
-import org.mitre.synthea.world.concepts.HealthRecord.Entry;
 import org.mitre.synthea.world.concepts.VitalSign;
 
 public class Person implements Serializable, QuadTreeData {
@@ -85,12 +84,16 @@ public class Person implements Serializable, QuadTreeData {
   public Map<VitalSign, ValueGenerator> vitalSigns;
   private Map<String, Map<String, Integer>> symptoms;
   private Map<String, Map<String, Boolean>> symptomStatuses;
-  /** the active health record. */
+  /* the active health record. */
   public HealthRecord record;
+  // Uncovered Health Record entries
   public HealthRecord uncoveredHealthRecord;
+  // Full Real Covered HealthRecord entries
+  public HealthRecord fullCoveredHealthRecord;
+  // Individual provider Health Records (If hasMultipleRecords)
   public Map<String, HealthRecord> records;
   public boolean hasMultipleRecords;
-  /** History of the currently active module. */
+  /* History of the currently active module. */
   public List<State> history;
   /* Person's Payer History. */
   // Each element in payerHistory array corresponds to the insurance held at that age.
@@ -119,6 +122,7 @@ public class Person implements Serializable, QuadTreeData {
     }
     record = new HealthRecord(this);
     uncoveredHealthRecord = new HealthRecord(this);
+    fullCoveredHealthRecord = new HealthRecord(this);
     // 128 because it's a nice power of 2, and nobody will reach that age
     payerHistory = new Payer[128];
     payerOwnerHistory = new String[128];
@@ -383,22 +387,28 @@ public class Person implements Serializable, QuadTreeData {
   public Encounter encounterStart(long time, EncounterType type) {
     // Set the record for the current provider as active
     Provider provider = getProvider(type, time);
-    record = getHealthRecord(provider);
+    this.record = getHealthRecord(provider, time);
     // Start the encounter
-    return record.encounterStart(time, type);
+    return this.record.encounterStart(time, type);
   }
 
   /**
-   * Returns the current healthrecord based on the provider. If the person has
-   * No Insurance at the current time, uncoveredHealthRecord will be returned.
-   * TODO - Add if the person can/cannot afford the care, then uncoveredHealthRecord
+   * Returns the current healthrecord based on the provider. If the person has no more remaining
+   * income, Uncovered Helath Record is returned.
    * 
    * @param provider the provider of the encounter
-   * @param entry the entry
+   * @param time the current time
    */
-  public synchronized HealthRecord getHealthRecord(Provider provider) {
+  public synchronized HealthRecord getHealthRecord(Provider provider, long time) {
 
-    HealthRecord returnValue = this.record;
+    // If the person has no more income at this time, then operate on the UncoveredHealthRecord.
+    // Note: If person has no more income then they can no longer afford copays/premiums/etc.
+    // meaning we can gaurantee that they currently have no insurance.
+    if (!this.stillHasIncome(time)) {
+      return this.uncoveredHealthRecord;
+    }
+
+    HealthRecord returnValue = this.fullCoveredHealthRecord;
     if (hasMultipleRecords) {
       String key = provider.uuid;
       if (!records.containsKey(key)) {
@@ -515,7 +525,9 @@ public class Person implements Serializable, QuadTreeData {
    * Sets the person's payer history at the given age to the given payer.
    */
   public void setPayerAtAge(int age, Payer payer) {
-    if (payerHistory[age] != null) {
+    if (payerHistory[age] != null && !payer.equals(Payer.noInsurance)) {
+      // TODO: When a person switched to no insurance because they run out of income, this runs.
+      // Temporary fix by adding '!payer.equals(Payer.noInsurance)'
       throw new RuntimeException("ERROR: Overwriting a person's insurance at age " + age);
     }
     this.payerHistory[age] = payer;
@@ -610,26 +622,6 @@ public class Person implements Serializable, QuadTreeData {
   }
 
   /**
-   * Returns whether or not the person can afford to pay out of pocket for the given entry.
-   * Allows a person to pay exceeding their income once.
-   * 
-   * @param time the time to pay for.
-   */
-  public boolean canAffordExpense(long time) {
-
-    double currentYearlyExpenses;
-    if (this.healthcareExpensesYearly.containsKey(this.ageInYears(time))) {
-      currentYearlyExpenses = this.healthcareExpensesYearly.get(this.ageInYears(time));
-    } else {
-      currentYearlyExpenses = 0.0;
-    }
-    if ( (int) this.attributes.get(Person.INCOME) - currentYearlyExpenses > 0) {
-      return true;
-    }
-    return false;
-  }
-
-  /**
    * Checks if the person has paid their monthly premium. If not, the person pays
    * the premium to their current payer.
    * 
@@ -645,16 +637,13 @@ public class Person implements Serializable, QuadTreeData {
     int lastMonthPaid = (int) this.attributes.get(Person.LAST_MONTH_PAID);
 
     if (currentMonth > lastMonthPaid || (currentMonth == 1 && lastMonthPaid == 12)) {
-
-      // Check that the person still has income to spend
-      if (!this.canAffordExpense(time)) {
-
-      }
       // Pay the payer.
       Payer currentPayer = this.getPayerAtTime(time);
       this.addExpense(currentPayer.payMonthlyPremium(), time);
       // Update the last monthly premium paid.
       this.attributes.put(Person.LAST_MONTH_PAID, currentMonth);
+      // Check if person has gone in debt. If yes, then they recieve no insurance.
+      this.stillHasIncome(time);
     }
   }
 
@@ -666,6 +655,30 @@ public class Person implements Serializable, QuadTreeData {
   public void resetDeductible(long time) {
     double deductible = this.getPayerAtTime(time).getDeductible();
     this.attributes.put(Person.DEDUCTIBLE, deductible);
+  }
+
+  /**
+   * Returns whether the person's yearly expenses exceed their income. If they do,
+   * then they will switch to No Insurance.
+   * 
+   * @param time the current time
+   */
+  private boolean stillHasIncome(long time) {
+
+    double currentYearlyExpenses;
+    if (this.healthcareExpensesYearly.containsKey(this.ageInYears(time))) {
+      currentYearlyExpenses = this.healthcareExpensesYearly.get(this.ageInYears(time));
+    } else {
+      currentYearlyExpenses = 0.0;
+    }
+
+    if ((int) this.attributes.get(Person.INCOME) - currentYearlyExpenses > 0) {
+      // Person has remaining income for the year.
+      return true;
+    }
+    // Person no longer has income for the year. They will switch to No Insurance.
+    this.setPayerAtTime(time, Payer.noInsurance);
+    return false;
   }
 
   /**
