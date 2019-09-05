@@ -246,7 +246,7 @@ public class Location {
    * @param cityName Name of the city, or null to choose one randomly
    */
   public void assignPoint(Person person, String cityName) {
-    List<Place> zipsForCity = null;
+    List<Place> zipsForCity;
 
     if (cityName == null) {
       int size = zipCodes.keySet().size();
@@ -258,12 +258,19 @@ public class Location {
       zipsForCity = zipCodes.get(cityName + " Town");
     }
     
-    Place place = null;
+    Place place;
     if (zipsForCity.size() == 1) {
       place = zipsForCity.get(0);
     } else {
-      // pick a random one
-      place = zipsForCity.get(person.randInt(zipsForCity.size()));
+      String personZip = (String) person.attributes.get(Person.ZIP);
+      if (personZip == null) {
+        place = zipsForCity.get(person.randInt(zipsForCity.size()));
+      } else {
+        place = zipsForCity.stream()
+            .filter(c -> personZip.equals(c.postalCode))
+            .findFirst()
+            .orElse(zipsForCity.get(person.randInt(zipsForCity.size())));
+      }
     }
     
     if (place != null) {
@@ -273,8 +280,8 @@ public class Location {
       // Precision within 0.001 degree is more or less a neighborhood or street.
       // Precision within 0.01 is a village or town
       // Precision within 0.1 is a large city
-      double dx = person.rand(-0.1, 0.1);
-      double dy = person.rand(-0.1, 0.1);
+      double dx = person.rand(-0.05, 0.05);
+      double dy = person.rand(-0.05, 0.05);
       coordinate.setLocation(coordinate.x + dx, coordinate.y + dy);
       person.attributes.put(Person.COORDINATE, coordinate);
     }
